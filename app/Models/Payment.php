@@ -26,6 +26,7 @@ class Payment extends Model
         'amount' => 'decimal:2',
         'service_charge' => 'decimal:2',
         'total_amount' => 'decimal:2',
+        'transaction_id' => 'encrypted',
         'gateway_response' => 'encrypted',
     ];
 

@@ -15,7 +15,7 @@ class Appointment extends Model
         'veterinarian_id',
         'pet_id',
         'time_slot_id',
-        'status',
+        'status', // pending, confirmed, in_progress, completed, cancelled
         'consultation_notes',
     ];
 
@@ -31,5 +31,20 @@ class Appointment extends Model
     public function petOwner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'pet_owner_id');
+    }
+
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'pet_owner_id');
+    }
+
+    public function pet(): BelongsTo
+    {
+        return $this->belongsTo(Pet::class);
+    }
+
+    public function timeSlot(): BelongsTo
+    {
+        return $this->belongsTo(TimeSlot::class);
     }
 }

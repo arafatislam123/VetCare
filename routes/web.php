@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DoctorController;
 use App\Http\Controllers\PetController;
+use App\Http\Controllers\AppointmentController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -48,6 +49,12 @@ Route::middleware('auth')->group(function () {
     // Pet/Animal management routes (for pet owners)
     Route::middleware('role:pet_owner')->group(function () {
         Route::resource('pets', PetController::class);
+        
+        // Appointment booking routes
+        Route::post('/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
+        Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
+        Route::get('/appointments/{appointment}', [AppointmentController::class, 'show'])->name('appointments.show');
+        Route::post('/appointments/{appointment}/cancel', [AppointmentController::class, 'cancel'])->name('appointments.cancel');
     });
     
     // Admin-only routes
@@ -62,6 +69,11 @@ Route::middleware('auth')->group(function () {
         Route::get('/veterinarian/schedule', function () {
             return Inertia::render('Veterinarian/Schedule');
         })->name('veterinarian.schedule');
+        
+        // Veterinarian appointment management
+        Route::get('/veterinarian/appointments', [AppointmentController::class, 'index'])->name('veterinarian.appointments.index');
+        Route::get('/veterinarian/appointments/{appointment}', [AppointmentController::class, 'show'])->name('veterinarian.appointments.show');
+        Route::post('/veterinarian/appointments/{appointment}/cancel', [AppointmentController::class, 'cancel'])->name('veterinarian.appointments.cancel');
     });
 });
 
