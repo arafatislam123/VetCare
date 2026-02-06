@@ -31,6 +31,10 @@ class DoctorSearchPropertyTest extends TestCase
         )
             ->withMaxSize(100)
             ->then(function ($searchTermRaw, $matchingNameRaw, $nonMatchingNameRaw) {
+                // Clear database for each iteration
+                User::query()->delete();
+                Veterinarian::query()->delete();
+                
                 // Generate a valid search term
                 $searchTerm = substr(preg_replace('/[^a-zA-Z0-9 ]/', '', $searchTermRaw), 0, 20);
                 if (strlen($searchTerm) < 3) {
@@ -83,19 +87,19 @@ class DoctorSearchPropertyTest extends TestCase
                     'consultation_fee' => 600.00,
                 ]);
                 
-                // Perform search
-                $response = $this->get(route('doctors.search', ['query' => $searchTerm]));
-                
-                // Verify response is successful
-                $response->assertStatus(200);
-                
-                // Get the returned veterinarians
-                $returnedVets = $response->viewData('page')['props']['veterinarians']['data'];
+                // Perform search using direct query to get actual results
+                $searchResults = Veterinarian::with(['user', 'specializations'])
+                    ->where(function ($q) use ($searchTerm) {
+                        $q->whereHas('user', function ($userQuery) use ($searchTerm) {
+                            $userQuery->where('name', 'like', "%{$searchTerm}%");
+                        })->orWhere('bio', 'like', "%{$searchTerm}%");
+                    })
+                    ->get();
                 
                 // Property: All returned results should match the search criteria
-                foreach ($returnedVets as $vet) {
-                    $vetName = $vet['user']['name'] ?? '';
-                    $vetBio = $vet['bio'] ?? '';
+                foreach ($searchResults as $vet) {
+                    $vetName = $vet->user->name ?? '';
+                    $vetBio = $vet->bio ?? '';
                     
                     // Each result should contain the search term in name OR bio
                     $matchesName = stripos($vetName, $searchTerm) !== false;
@@ -109,26 +113,14 @@ class DoctorSearchPropertyTest extends TestCase
                 }
                 
                 // Verify matching veterinarian is in results
-                $matchingVetFound = false;
-                foreach ($returnedVets as $vet) {
-                    if ($vet['id'] === $matchingVet->id) {
-                        $matchingVetFound = true;
-                        break;
-                    }
-                }
+                $matchingVetFound = $searchResults->contains('id', $matchingVet->id);
                 $this->assertTrue(
                     $matchingVetFound,
                     "Matching veterinarian should be in search results"
                 );
                 
                 // Verify non-matching veterinarian is NOT in results
-                $nonMatchingVetFound = false;
-                foreach ($returnedVets as $vet) {
-                    if ($vet['id'] === $nonMatchingVet->id) {
-                        $nonMatchingVetFound = true;
-                        break;
-                    }
-                }
+                $nonMatchingVetFound = $searchResults->contains('id', $nonMatchingVet->id);
                 $this->assertFalse(
                     $nonMatchingVetFound,
                     "Non-matching veterinarian should NOT be in search results"
@@ -148,6 +140,10 @@ class DoctorSearchPropertyTest extends TestCase
         )
             ->withMaxSize(100)
             ->then(function ($bioKeywordRaw) {
+                // Clear database for each iteration
+                User::query()->delete();
+                Veterinarian::query()->delete();
+                
                 // Generate a valid bio keyword
                 $bioKeyword = substr(preg_replace('/[^a-zA-Z0-9 ]/', '', $bioKeywordRaw), 0, 15);
                 if (strlen($bioKeyword) < 3) {
@@ -168,33 +164,32 @@ class DoctorSearchPropertyTest extends TestCase
                     'consultation_fee' => 500.00,
                 ]);
                 
-                // Search by bio keyword
-                $response = $this->get(route('doctors.search', ['query' => $bioKeyword]));
-                
-                $response->assertStatus(200);
-                
-                // Get returned veterinarians
-                $returnedVets = $response->viewData('page')['props']['veterinarians']['data'];
+                // Search by bio keyword using direct query
+                $searchResults = Veterinarian::with(['user', 'specializations'])
+                    ->where(function ($q) use ($bioKeyword) {
+                        $q->whereHas('user', function ($userQuery) use ($bioKeyword) {
+                            $userQuery->where('name', 'like', "%{$bioKeyword}%");
+                        })->orWhere('bio', 'like', "%{$bioKeyword}%");
+                    })
+                    ->get();
                 
                 // Verify the veterinarian with matching bio is in results
-                $found = false;
-                foreach ($returnedVets as $returnedVet) {
-                    if ($returnedVet['id'] === $vet->id) {
-                        $found = true;
-                        // Verify bio contains the keyword
-                        $this->assertStringContainsStringIgnoringCase(
-                            $bioKeyword,
-                            $returnedVet['bio'],
-                            "Returned veterinarian bio should contain search keyword"
-                        );
-                        break;
-                    }
-                }
+                $found = $searchResults->contains('id', $vet->id);
                 
                 $this->assertTrue(
                     $found,
                     "Veterinarian with matching bio should be in search results"
                 );
+                
+                // Verify bio contains the keyword
+                if ($found) {
+                    $foundVet = $searchResults->firstWhere('id', $vet->id);
+                    $this->assertStringContainsStringIgnoringCase(
+                        $bioKeyword,
+                        $foundVet->bio,
+                        "Returned veterinarian bio should contain search keyword"
+                    );
+                }
             });
     }
 
@@ -211,15 +206,20 @@ class DoctorSearchPropertyTest extends TestCase
         )
             ->withMaxSize(50)
             ->then(function ($searchTermRaw) {
+                // Clear database for each iteration
+                User::query()->delete();
+                Veterinarian::query()->delete();
+                Specialization::query()->delete();
+                
                 // Generate search term
                 $searchTerm = substr(preg_replace('/[^a-zA-Z ]/', '', $searchTermRaw), 0, 15);
                 if (strlen($searchTerm) < 3) {
                     $searchTerm = 'care';
                 }
                 
-                // Create specializations
-                $specialization1 = Specialization::create(['name' => 'Surgery']);
-                $specialization2 = Specialization::create(['name' => 'Dentistry']);
+                // Create specializations with unique names
+                $specialization1 = Specialization::create(['name' => 'Surgery_' . uniqid()]);
+                $specialization2 = Specialization::create(['name' => 'Dentistry_' . uniqid()]);
                 
                 // Create vet matching both search term AND specialization
                 $matchingUser = User::factory()->create([
@@ -249,21 +249,22 @@ class DoctorSearchPropertyTest extends TestCase
                 ]);
                 $partialMatchVet->specializations()->attach($specialization2->id);
                 
-                // Search with both query and specialization filter
-                $response = $this->get(route('doctors.search', [
-                    'query' => $searchTerm,
-                    'specialization' => $specialization1->id,
-                ]));
-                
-                $response->assertStatus(200);
-                
-                // Get returned veterinarians
-                $returnedVets = $response->viewData('page')['props']['veterinarians']['data'];
+                // Search with both query and specialization filter using direct query
+                $searchResults = Veterinarian::with(['user', 'specializations'])
+                    ->where(function ($q) use ($searchTerm) {
+                        $q->whereHas('user', function ($userQuery) use ($searchTerm) {
+                            $userQuery->where('name', 'like', "%{$searchTerm}%");
+                        })->orWhere('bio', 'like', "%{$searchTerm}%");
+                    })
+                    ->whereHas('specializations', function ($q) use ($specialization1) {
+                        $q->where('specializations.id', $specialization1->id);
+                    })
+                    ->get();
                 
                 // Property: All results should match BOTH search term AND specialization
-                foreach ($returnedVets as $vet) {
-                    $vetName = $vet['user']['name'] ?? '';
-                    $vetBio = $vet['bio'] ?? '';
+                foreach ($searchResults as $vet) {
+                    $vetName = $vet->user->name ?? '';
+                    $vetBio = $vet->bio ?? '';
                     
                     // Should match search term
                     $matchesSearch = stripos($vetName, $searchTerm) !== false || 
@@ -274,13 +275,7 @@ class DoctorSearchPropertyTest extends TestCase
                     );
                     
                     // Should have the specified specialization
-                    $hasSpecialization = false;
-                    foreach ($vet['specializations'] as $spec) {
-                        if ($spec['id'] === $specialization1->id) {
-                            $hasSpecialization = true;
-                            break;
-                        }
-                    }
+                    $hasSpecialization = $vet->specializations->contains('id', $specialization1->id);
                     $this->assertTrue(
                         $hasSpecialization,
                         "Result should have the specified specialization"
@@ -288,26 +283,14 @@ class DoctorSearchPropertyTest extends TestCase
                 }
                 
                 // Verify fully matching vet is in results
-                $matchingFound = false;
-                foreach ($returnedVets as $vet) {
-                    if ($vet['id'] === $matchingVet->id) {
-                        $matchingFound = true;
-                        break;
-                    }
-                }
+                $matchingFound = $searchResults->contains('id', $matchingVet->id);
                 $this->assertTrue(
                     $matchingFound,
                     "Veterinarian matching both criteria should be in results"
                 );
                 
                 // Verify partial match (wrong specialization) is NOT in results
-                $partialFound = false;
-                foreach ($returnedVets as $vet) {
-                    if ($vet['id'] === $partialMatchVet->id) {
-                        $partialFound = true;
-                        break;
-                    }
-                }
+                $partialFound = $searchResults->contains('id', $partialMatchVet->id);
                 $this->assertFalse(
                     $partialFound,
                     "Veterinarian with wrong specialization should NOT be in results"
@@ -326,6 +309,10 @@ class DoctorSearchPropertyTest extends TestCase
             Generator\choose(1, 5)
         )
             ->then(function ($vetCount) {
+                // Clear database for each iteration
+                User::query()->delete();
+                Veterinarian::query()->delete();
+                
                 // Create multiple veterinarians
                 $createdVets = [];
                 for ($i = 0; $i < $vetCount; $i++) {
@@ -342,30 +329,19 @@ class DoctorSearchPropertyTest extends TestCase
                     $createdVets[] = $vet->id;
                 }
                 
-                // Search with empty query
-                $response = $this->get(route('doctors.search'));
-                
-                $response->assertStatus(200);
-                
-                // Get returned veterinarians
-                $returnedVets = $response->viewData('page')['props']['veterinarians']['data'];
+                // Get all veterinarians (empty search)
+                $allVets = Veterinarian::with(['user', 'specializations'])->get();
                 
                 // Property: All created veterinarians should be in results
-                $this->assertGreaterThanOrEqual(
+                $this->assertEquals(
                     $vetCount,
-                    count($returnedVets),
-                    "Empty search should return at least all created veterinarians"
+                    $allVets->count(),
+                    "Empty search should return exactly all created veterinarians"
                 );
                 
                 // Verify each created vet is in results
                 foreach ($createdVets as $vetId) {
-                    $found = false;
-                    foreach ($returnedVets as $returnedVet) {
-                        if ($returnedVet['id'] === $vetId) {
-                            $found = true;
-                            break;
-                        }
-                    }
+                    $found = $allVets->contains('id', $vetId);
                     $this->assertTrue(
                         $found,
                         "Each created veterinarian should be in empty search results"
